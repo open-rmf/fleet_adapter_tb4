@@ -22,6 +22,10 @@
 #include <rmf_traffic/geometry/Circle.hpp>
 #include <rmf_traffic/agv/Interpolate.hpp>
 
+#include <rmf_traffic_ros2/Time.hpp>
+
+#include <tf2/LinearMath/Quaternion.h>
+
 //==============================================================================
 FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
 : Node("turtlebot_fleet_adapter", options)
@@ -161,8 +165,9 @@ void FleetAdapter::add_robots()
 
   auto add_robot =
   [data = _data](
-    const std::string& name,
     const std::string& ns,
+    const std::string& name,
+    const std::string& charger_name,
     const std::string& initial_map_name,
     rclcpp::Node::SharedPtr node)
   {
@@ -182,16 +187,40 @@ void FleetAdapter::add_robots()
       node->get_logger(),
       "Initializing robot [%s]", name.c_str()
     );
-    if (robot->initialize(name, ns, initial_map_name, node))
+    if (robot->initialize(ns, name, charger_name, initial_map_name, node))
     {
       insertion.first->second = std::move(robot);
+
       data->adapter->add_robot(
         insertion.first->second->get_state(),
-        insertion.first->second->get_state,
-        insertion.first->second->navigate,
-        insertion.first->second->stop,
-        insertion.first->second->dock,
-        insertion.first->second->action_executor
+        [robot = insertion.first->second]() -> RobotState
+        {
+          return robot->get_state();
+        },
+        [robot = insertion.first->second](
+          const std::string& map_name,
+          const Eigen::Vector3d goal,
+          RobotUpdateHandlePtr robot_handle) -> GoalCompletedCallback
+        {
+          return robot->navigate(map_name, goal, robot_handle);
+        },
+        [robot = insertion.first->second]() -> bool
+        {
+          return robot->stop();
+        },
+        [robot = insertion.first->second](
+          const std::string& dock_name,
+          RobotUpdateHandlePtr robot_handle) -> GoalCompletedCallback
+        {
+          return robot->dock(dock_name, robot_handle);
+        },
+        [robot = insertion.first->second](
+          const std::string& category,
+          const nlohmann::json& description,
+          RobotUpdateHandle::ActionExecution execution)
+        {
+          robot->action_executor(category, description, std::move(execution));
+        }
       );
     }
     else
@@ -205,34 +234,70 @@ void FleetAdapter::add_robots()
 
   // We pass this classes node and not adapter node so that callback queues
   // can execute independently.
-  auto node = shared_from_this();
+  auto node = _data->node;
   std::vector<std::string> robots = {"tb4"};
   robots = this->declare_parameter("robots", robots);
   std::vector<std::string> namespaces;
+  std::vector<std::string> charger_names;
   std::vector<std::string> initial_map_names;
   for (const auto& r : robots)
   {
     namespaces.push_back(this->declare_parameter(r + ".namespace", ""));
     initial_map_names.push_back(this->declare_parameter(
       r + ".initial_map_name", "L1"));
+    charger_names.push_back(this->declare_parameter(
+      r + ".charger_waypoint", "tinyRobot1_charger"));
   }
 
   // Spin separate threads to add each robot.
-  for (std::size_t i = 0; i < robots.size(), ++i)
+  for (std::size_t i = 0; i < robots.size(); ++i)
   {
-    _threads.push_back(std::thread(
-      add_robot, robots[i], namespaces[i], initial_map_names[i], node));
+    _data->threads.push_back(std::thread(
+      add_robot, namespaces[i], robots[i], charger_names[i], initial_map_names[i], node));
   }
 }
 
 //==============================================================================
 auto FleetAdapter::Robot::initialize(
-  const std::string& name,
   const std::string& ns,
-  const std::string& initial_map_name,
-  rclcpp::Node::SharedPtr node) -> bool
+  const std::string& name_,
+  const std::string& charger_name_,
+  const std::string& initial_map_name_,
+  rclcpp::Node::SharedPtr node_) -> bool
 {
-  return false;
+  name = name_;
+  charger_name = charger_name_;
+  map_name = initial_map_name_;
+  node = node_;
+  odom_sub = node->create_subscription<Odom>(
+    ns + "/odom",
+    rclcpp::QoS(10),
+    [&](Odom::ConstSharedPtr msg)
+    {
+      tf2::Quaternion q(
+        msg->pose.pose.orientation.x,
+        msg->pose.pose.orientation.y,
+        msg->pose.pose.orientation.z,
+        msg->pose.pose.orientation.w);
+      tf2::Matrix3x3 m(q);
+      double roll, pitch, yaw;
+      m.getRPY(roll, pitch, yaw);
+
+      // TODO(YV): Transformation
+      location = Eigen::Vector3d{
+        msg->pose.pose.position.x,
+        msg->pose.pose.position.y,
+        yaw};
+    }
+  );
+
+  // Wait for nav2 action server
+  nav2_client = rclcpp_action::create_client<NavigationAction>(
+    node,
+    ns + "/navigate_to_pose");
+
+  // TODO(YV): Add a timeout
+  return nav2_client->wait_for_action_server();
 }
 
 //==============================================================================
@@ -252,7 +317,7 @@ auto FleetAdapter::Robot::get_state() -> RobotState
 //==============================================================================
 auto FleetAdapter::Robot::navigate(
   const std::string& map_name,
-  const Eigen::Vector3d goal,
+  const Eigen::Vector3d goal_,
   RobotUpdateHandlePtr robot_handle) -> GoalCompletedCallback
 {
   auto cb =
@@ -260,22 +325,88 @@ auto FleetAdapter::Robot::navigate(
     rmf_traffic::Duration& remaining_time_,
     bool& request_replan_) -> bool
   {
-    if (this->remaining_time.has_value())
+    if (!finished_navigating)
     {
-      // Robot is still navigating;
-      remaining_time_ = this->remaining_time.value();
+      // Robot is still navigating. Update remaining time once we receive a
+      // feedback.
+      if (remaining_time.has_value())
+        remaining_time_ = remaining_time.value();
       return false;
     }
     return true;
   };
 
-  // TODO(YV): Send nav goal.
+  auto goal = NavigationAction::Goal();
+  goal.pose.header.frame_id = "odom";
+  goal.pose.header.stamp = node->get_clock()->now();
+  goal.pose.pose.position.x = goal_[0];
+  goal.pose.pose.position.y = goal_[0];
+  auto q = tf2::Quaternion();
+  q.setEuler(goal_[2], 0.0, 0.0);
+  goal.pose.pose.orientation = tf2::toMsg(q);
+
+  auto goal_options =
+    rclcpp_action::Client<NavigationAction>::SendGoalOptions();
+  goal_options.goal_response_callback =
+    [this](const GoalHandle::SharedPtr& goal_handle)
+    {
+      if (!goal_handle)
+      {
+        RCLCPP_ERROR(
+          node->get_logger(),
+          "Navigation goal was rejected by server for robot [%s]",
+          name.c_str());
+      }
+      else
+      {
+        RCLCPP_INFO(
+          node->get_logger(),
+          "Navigation goal accepted by server for robot [%s].",
+          name.c_str());
+      }
+    };
+  goal_options.feedback_callback =
+    [this](
+      GoalHandle::SharedPtr,
+      const std::shared_ptr<const NavigationAction::Feedback> feedback)
+    {
+      remaining_time =
+        rmf_traffic_ros2::convert(feedback->estimated_time_remaining);
+    };
+  goal_options.result_callback =
+    [this](const GoalHandle::WrappedResult & result)
+    {
+      switch (result.code)
+      {
+        case rclcpp_action::ResultCode::SUCCEEDED:
+          break;
+        case rclcpp_action::ResultCode::ABORTED:
+          RCLCPP_ERROR(node->get_logger(), "Goal was aborted for robot %s.", name.c_str());
+          return;
+        case rclcpp_action::ResultCode::CANCELED:
+          RCLCPP_ERROR(node->get_logger(), "Goal was canceled for robot %s.", name.c_str());
+          return;
+        default:
+          RCLCPP_ERROR(node->get_logger(), "Unknown result code");
+          return;
+      }
+      finished_navigating = true;
+      goal_handle = nullptr;
+    };
+
+  finished_navigating = false;
+  remaining_time = std::nullopt;
+  nav2_client->async_send_goal(goal, goal_options);
   return cb;
 }
 
 //==============================================================================
 auto FleetAdapter::Robot::stop() -> bool
 {
+  if (goal_handle != nullptr)
+  {
+    nav2_client->async_cancel_goal(goal_handle);
+  }
   return true;
 }
 
@@ -289,12 +420,6 @@ auto FleetAdapter::Robot::dock(
     rmf_traffic::Duration& remaining_time_,
     bool& request_replan_) -> bool
   {
-    if (this->remaining_time.has_value())
-    {
-      // Robot is still navigating;
-      remaining_time_ = this->remaining_time.value();
-      return false;
-    }
     return true;
   };
 

@@ -15,7 +15,9 @@ set(dep_pkgs
   rclcpp_action
   rclcpp_components
   rmf_fleet_adapter
+  rmf_traffic_ros2
   tf2_geometry_msgs
+  tf2
   tf2_ros
 )
 foreach(pkg ${dep_pkgs})
@@ -35,7 +37,9 @@ target_link_libraries(fleet_adapter
     ${rclcpp_action_LIBRARIES}
     ${rclcpp_components_LIBRARIES}
     rmf_fleet_adapter::rmf_fleet_adapter
+    rmf_traffic_ros2::rmf_traffic_ros2
     tf2_geometry_msgs::tf2_geometry_msgs
+    ${tf2_LIBRARIES}
     ${tf2_ros_LIBRARIES}
 )
 
@@ -49,7 +53,9 @@ target_include_directories(fleet_adapter
     ${rclcpp_INCLUDE_DIRS}
     ${rclcpp_action_INCLUDE_DIRS}
     ${rclcpp_components_INCLUDE_DIRS}
+    ${rmf_traffic_ros2_INCLUDE_DIRS}
     ${rmf_fleet_adapter_INCLUDE_DIRS}
+    ${tf2_INCLUDE_DIRS}
     ${tf2_ros_INCLUDE_DIRS}
 )
 

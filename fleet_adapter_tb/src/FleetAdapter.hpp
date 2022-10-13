@@ -69,14 +69,19 @@ private:
     std::string charger_name;
     std::string map_name;
     Eigen::Vector3d location;
-    double battery_soc;
+    double battery_soc = 1.0;
     std::optional<rmf_traffic::Duration> remaining_time;
 
     rclcpp::Node::SharedPtr node;
+    rclcpp::Subscription<Odom>::SharedPtr odom_sub;
+    rclcpp_action::Client<NavigationAction>::SharedPtr nav2_client;
+    GoalHandle::SharedPtr goal_handle = nullptr;
+    bool finished_navigating = true;
 
     bool initialize(
-      const std::string& name,
       const std::string& ns,
+      const std::string& name,
+      const std::string& charger_name,
       const std::string& initial_map_name,
       rclcpp::Node::SharedPtr node);
 
