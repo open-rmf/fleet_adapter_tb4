@@ -63,7 +63,7 @@ FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
       rmf_traffic::geometry::make_final_convex<
         rmf_traffic::geometry::Circle>(0.15),
       rmf_traffic::geometry::make_final_convex<
-        rmf_traffic::geometry::Circle>(0.15)
+        rmf_traffic::geometry::Circle>(0.2)
     }
   };
   traits.get_differential()->set_reversible(true);
