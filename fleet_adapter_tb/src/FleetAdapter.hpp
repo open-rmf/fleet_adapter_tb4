@@ -36,7 +36,7 @@
 #include <thread>
 
 //==============================================================================
-class FleetAdapter : public rclcpp::Node
+class FleetAdapter : public std::enable_shared_from_this<FleetAdapter>
 {
 public:
   using EasyFullControl = rmf_fleet_adapter::agv::EasyFullControl;
@@ -60,6 +60,8 @@ public:
   FleetAdapter(
     const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
 
+  void run();
+
   ~FleetAdapter();
 
 private:
@@ -68,7 +70,7 @@ private:
     std::string name;
     std::string charger_name;
     std::string map_name;
-    Eigen::Vector3d location;
+    std::optional<Eigen::Vector3d> location;
     double battery_soc = 1.0;
     std::optional<rmf_traffic::Duration> remaining_time;
 
@@ -112,12 +114,11 @@ private:
     std::shared_ptr<Configuration> config;
     std::shared_ptr<EasyFullControl> adapter;
     std::unordered_map<std::string, std::shared_ptr<Robot>> robots;
+    rclcpp::Node::SharedPtr node;
   };
 
   void add_robots();
   std::shared_ptr<Data> _data;
-
 };
-
 
 #endif // SRC__FLEETADAPTER_HPP

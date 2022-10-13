@@ -25,8 +25,8 @@ foreach(pkg ${dep_pkgs})
 endforeach()
 
 #===============================================================================
-add_library(fleet_adapter SHARED src/FleetAdapter.cpp)
-# add_executable(fleet_adapter src/FleetAdapter.cpp)
+# add_library(fleet_adapter SHARED src/FleetAdapter.cpp)
+add_executable(fleet_adapter src/FleetAdapter.cpp)
 
 target_link_libraries(fleet_adapter
   PUBLIC
@@ -61,10 +61,10 @@ target_include_directories(fleet_adapter
 
 target_compile_features(fleet_adapter INTERFACE cxx_std_17)
 
-rclcpp_components_register_node(fleet_adapter
-  PLUGIN "FleetAdapter"
-  EXECUTABLE full_control
-  EXECUTOR MultiThreadedExecutor)
+# rclcpp_components_register_node(fleet_adapter
+#   PLUGIN "FleetAdapter"
+#   EXECUTABLE full_control
+#   EXECUTOR MultiThreadedExecutor)
 
 #===============================================================================
 install(

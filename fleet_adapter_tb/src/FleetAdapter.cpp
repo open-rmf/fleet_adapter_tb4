@@ -28,20 +28,30 @@
 
 //==============================================================================
 FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
-: Node("turtlebot_fleet_adapter", options)
 {
+  _data = std::make_shared<Data>();
+  _data->node =
+    std::make_shared<rclcpp::Node>("turtlebot_fleet_adapter", options);
+  _data->threads.push_back(std::thread(
+    [n = _data->node]()
+    {
+      while (rclcpp::ok())
+      {
+        rclcpp::spin_some(n);
+      }
+    }
+  ));
+
   RCLCPP_INFO(
-    this->get_logger(),
+    _data->node->get_logger(),
     "Starting %s",
-    this->get_name()
+    _data->node->get_name()
   );
 
-  _data = std::make_shared<Data>();
-
-  _data->fleet_name = this->declare_parameter(
+  _data->fleet_name = _data->node->declare_parameter(
     "fleet_name", "turtlebot");
   RCLCPP_INFO(
-    this->get_logger(),
+    _data->node->get_logger(),
     "Configuring fleet [%s].",\
     _data->fleet_name.c_str()
   );
@@ -58,7 +68,7 @@ FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
   };
   traits.get_differential()->set_reversible(true);
 
-  std::string navgraph_path = this->declare_parameter("navgraph_path", "");
+  std::string navgraph_path = _data->node->declare_parameter("navgraph_path", "");
   auto graph =
     rmf_fleet_adapter::agv::parse_graph(navgraph_path, traits);
 
@@ -68,7 +78,7 @@ FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
   if (!battery_opt.has_value())
   {
     RCLCPP_ERROR(
-      this->get_logger(),
+      _data->node->get_logger(),
       "Invalid battery parameters");
   }
   const auto battery_system =
@@ -79,7 +89,7 @@ FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
   if (!mechanical_opt.has_value())
   {
     RCLCPP_ERROR(
-      this->get_logger(),
+      _data->node->get_logger(),
       "Invalid mechanical parameters");
   }
 
@@ -92,7 +102,7 @@ FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
   if (!ambient_power_system)
   {
     RCLCPP_ERROR(
-      this->get_logger(),
+      _data->node->get_logger(),
       "Invalid values supplied for ambient power system");
   }
   std::shared_ptr<rmf_battery::agv::SimpleDevicePowerSink> ambient_sink =
@@ -104,7 +114,7 @@ FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
   if (!tool_power_system)
   {
     RCLCPP_ERROR(
-      this->get_logger(),
+      _data->node->get_logger(),
       "Invalid values supplied for tool power system");
   }
   std::shared_ptr<rmf_battery::agv::SimpleDevicePowerSink> tool_sink =
@@ -112,10 +122,10 @@ FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
     *battery_system, *tool_power_system);
 
   std::vector<std::string> actions = {"teleop"};
-  actions = this->declare_parameter("actions", actions);
+  actions = _data->node->declare_parameter("actions", actions);
 
   const std::string server_uri_string =
-    this->declare_parameter("server_uri", std::string());
+    _data->node->declare_parameter("server_uri", std::string());
 
   std::optional<std::string> server_uri = std::nullopt;
   if (!server_uri_string.empty())
@@ -144,7 +154,7 @@ FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
   if (_data->adapter != nullptr)
   {
     RCLCPP_INFO(
-      this->get_logger(),
+      _data->node->get_logger(),
       "Created EasyFullControl adapter instance."
     );
 
@@ -154,7 +164,7 @@ FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
   else
   {
     RCLCPP_INFO(
-      this->get_logger(),
+      _data->node->get_logger(),
       "Failed to create EasyFullControl adapter instance."
     );
   }
@@ -232,28 +242,28 @@ void FleetAdapter::add_robots()
     }
   };
 
-  // We pass this classes node and not adapter node so that callback queues
-  // can execute independently.
-  auto node = _data->node;
+
   std::vector<std::string> robots = {"tb4"};
-  robots = this->declare_parameter("robots", robots);
+  robots = _data->node->declare_parameter("robots", robots);
   std::vector<std::string> namespaces;
   std::vector<std::string> charger_names;
   std::vector<std::string> initial_map_names;
   for (const auto& r : robots)
   {
-    namespaces.push_back(this->declare_parameter(r + ".namespace", ""));
-    initial_map_names.push_back(this->declare_parameter(
+    namespaces.push_back(_data->node->declare_parameter(r + ".namespace", ""));
+    initial_map_names.push_back(_data->node->declare_parameter(
       r + ".initial_map_name", "L1"));
-    charger_names.push_back(this->declare_parameter(
+    charger_names.push_back(_data->node->declare_parameter(
       r + ".charger_waypoint", "tinyRobot1_charger"));
   }
 
   // Spin separate threads to add each robot.
+  // We pass this classes node and not adapter node so that callback queues
+  // can execute independently.
   for (std::size_t i = 0; i < robots.size(); ++i)
   {
     _data->threads.push_back(std::thread(
-      add_robot, namespaces[i], robots[i], charger_names[i], initial_map_names[i], node));
+      add_robot, namespaces[i], robots[i], charger_names[i], initial_map_names[i], _data->node));
   }
 }
 
@@ -288,8 +298,23 @@ auto FleetAdapter::Robot::initialize(
         msg->pose.pose.position.x,
         msg->pose.pose.position.y,
         yaw};
+
+      RCLCPP_DEBUG(
+        node->get_logger(),
+        "Robot [%s] is at [%.2f, %.2f, %.2f]",
+        name.c_str(),
+        location.value()[0],
+        location.value()[1],
+        location.value()[2]
+      );
     }
   );
+
+  // Wait for odom
+  while (!location.has_value())
+  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
 
   // Wait for nav2 action server
   nav2_client = rclcpp_action::create_client<NavigationAction>(
@@ -303,11 +328,12 @@ auto FleetAdapter::Robot::initialize(
 //==============================================================================
 auto FleetAdapter::Robot::get_state() -> RobotState
 {
+  const auto l = location.has_value() ? location.value() : Eigen::Vector3d{0, 0 ,0};
   auto state = RobotState(
     name,
     charger_name,
     map_name,
-    location,
+    l,
     battery_soc
   );
 
@@ -337,10 +363,10 @@ auto FleetAdapter::Robot::navigate(
   };
 
   auto goal = NavigationAction::Goal();
-  goal.pose.header.frame_id = "odom";
+  goal.pose.header.frame_id = "map";
   goal.pose.header.stamp = node->get_clock()->now();
   goal.pose.pose.position.x = goal_[0];
-  goal.pose.pose.position.y = goal_[0];
+  goal.pose.pose.position.y = goal_[1];
   auto q = tf2::Quaternion();
   q.setEuler(goal_[2], 0.0, 0.0);
   goal.pose.pose.orientation = tf2::toMsg(q);
@@ -438,6 +464,11 @@ void FleetAdapter::Robot::action_executor(
 //==============================================================================
 FleetAdapter::~FleetAdapter()
 {
+  _data->adapter->stop();
+  for (const auto& [_, robot] : _data->robots)
+  {
+    robot->stop();
+  }
   for (auto& thread : _data->threads)
   {
     if (thread.joinable())
@@ -445,15 +476,21 @@ FleetAdapter::~FleetAdapter()
   }
 }
 
-#include <rclcpp_components/register_node_macro.hpp>
-RCLCPP_COMPONENTS_REGISTER_NODE(FleetAdapter)
-
 //==============================================================================
-// int main(int argc, char** argv)
-// {
-//   rclcpp::init(argc, argv);
-//   auto adapter = std::make_shared<FleetAdapter>();
-//   rclcpp::spin(adapter);
-//   rclcpp::shutdown();
-//   return 0;
-// }
+void FleetAdapter::run()
+{
+  _data->adapter->wait();
+}
+
+// #include <rclcpp_components/register_node_macro.hpp>
+// RCLCPP_COMPONENTS_REGISTER_NODE(FleetAdapter)
+
+// ==============================================================================
+int main(int argc, char** argv)
+{
+  rclcpp::init(argc, argv);
+  auto adapter = std::make_shared<FleetAdapter>();
+  adapter->run();
+  rclcpp::shutdown();
+  return 0;
+}

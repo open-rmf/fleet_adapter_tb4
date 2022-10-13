@@ -56,7 +56,13 @@ def generate_launch_description():
             "navgraph_path",
             default_value=os.path.join(get_package_share_directory("rmf_demos_maps"), "maps/office/nav_graphs/0.yaml "),
             description="The path to the navigation graph for this fleet.",
-
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "use_sim_time",
+            default_value="true",
+            description='Use simulation (Gazebo) clock if true'
         )
     )
 
@@ -64,16 +70,18 @@ def generate_launch_description():
     fleet_name = LaunchConfiguration("fleet_name")
     robots = LaunchConfiguration("robots")
     navgraph_path = LaunchConfiguration("navgraph_path")
+    use_sim_time = LaunchConfiguration("use_sim_time")
 
     adapter = Node(
         namespace="",
         package="fleet_adapter_tb",
-        executable="full_control",
+        executable="fleet_adapter",
         name="fleet_adapter_tb",
         parameters=[
           {"fleet_name": fleet_name},
           # {"robots": robots},
-          {"navgraph_path": navgraph_path}
+          {"navgraph_path": navgraph_path},
+          {"use_sim_time": use_sim_time},
         ],
         output="screen",
     )
