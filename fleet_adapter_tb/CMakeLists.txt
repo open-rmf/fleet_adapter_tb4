@@ -24,6 +24,7 @@ endforeach()
 
 #===============================================================================
 add_library(fleet_adapter SHARED src/FleetAdapter.cpp)
+# add_executable(fleet_adapter src/FleetAdapter.cpp)
 
 target_link_libraries(fleet_adapter
   PUBLIC
@@ -62,7 +63,7 @@ rclcpp_components_register_node(fleet_adapter
 #===============================================================================
 install(
   DIRECTORY launch
-  DESTINATION share/
+  DESTINATION share/${PROJECT_NAME}
 )
 
 install(
