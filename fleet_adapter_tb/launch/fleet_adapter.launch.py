@@ -80,7 +80,7 @@ def generate_launch_description():
         parameters=[
           {"fleet_name": fleet_name},
           # {"robots": robots},
-          {"navgraph_path": navgraph_path},
+          {"nav_graph_file": navgraph_path},
           {"use_sim_time": use_sim_time},
         ],
         output="screen",

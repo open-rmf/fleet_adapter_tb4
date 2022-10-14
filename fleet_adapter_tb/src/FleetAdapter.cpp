@@ -56,101 +56,7 @@ FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
     _data->fleet_name.c_str()
   );
 
-  auto traits = rmf_traffic::agv::VehicleTraits{
-    {0.3, 0.7},
-    {1.5, 2.0},
-    rmf_traffic::Profile{
-      rmf_traffic::geometry::make_final_convex<
-        rmf_traffic::geometry::Circle>(0.15),
-      rmf_traffic::geometry::make_final_convex<
-        rmf_traffic::geometry::Circle>(0.15)
-    }
-  };
-  traits.get_differential()->set_reversible(true);
-
-  std::string navgraph_path =
-    _data->node->declare_parameter("navgraph_path", "");
-  auto graph =
-    rmf_fleet_adapter::agv::parse_graph(navgraph_path, traits);
-
-  const auto battery_opt = rmf_battery::agv::BatterySystem::make(
-    24.0, 30.0, 2.0);
-
-  if (!battery_opt.has_value())
-  {
-    RCLCPP_ERROR(
-      _data->node->get_logger(),
-      "Invalid battery parameters");
-  }
-  const auto battery_system =
-    std::make_shared<rmf_battery::agv::BatterySystem>(*battery_opt);
-
-  const auto mechanical_opt = rmf_battery::agv::MechanicalSystem::make(
-    10.0, 10.0, 0.2);
-  if (!mechanical_opt.has_value())
-  {
-    RCLCPP_ERROR(
-      _data->node->get_logger(),
-      "Invalid mechanical parameters");
-  }
-
-  std::shared_ptr<rmf_battery::agv::SimpleMotionPowerSink> motion_sink =
-    std::make_shared<rmf_battery::agv::SimpleMotionPowerSink>(
-    *battery_system, mechanical_opt.value());
-
-  const auto ambient_power_system = rmf_battery::agv::PowerSystem::make(
-    30.0);
-  if (!ambient_power_system)
-  {
-    RCLCPP_ERROR(
-      _data->node->get_logger(),
-      "Invalid values supplied for ambient power system");
-  }
-  std::shared_ptr<rmf_battery::agv::SimpleDevicePowerSink> ambient_sink =
-    std::make_shared<rmf_battery::agv::SimpleDevicePowerSink>(
-    *battery_system, *ambient_power_system);
-
-  auto tool_power_system = rmf_battery::agv::PowerSystem::make(
-    0.0);
-  if (!tool_power_system)
-  {
-    RCLCPP_ERROR(
-      _data->node->get_logger(),
-      "Invalid values supplied for tool power system");
-  }
-  std::shared_ptr<rmf_battery::agv::SimpleDevicePowerSink> tool_sink =
-    std::make_shared<rmf_battery::agv::SimpleDevicePowerSink>(
-    *battery_system, *tool_power_system);
-
-  std::vector<std::string> actions = {"teleop"};
-  actions = _data->node->declare_parameter("actions", actions);
-
-  const std::string server_uri_string =
-    _data->node->declare_parameter("server_uri", std::string());
-
-  std::optional<std::string> server_uri = std::nullopt;
-  if (!server_uri_string.empty())
-    server_uri = server_uri_string;
-
-  _data->config = std::make_shared<Configuration>(
-    _data->fleet_name,
-    std::move(traits),
-    std::move(graph),
-    battery_system,
-    motion_sink,
-    ambient_sink,
-    tool_sink,
-    0.1,
-    1.0,
-    true,
-    actions,
-    nullptr,
-    server_uri
-  );
-
-  _data->adapter = EasyFullControl::make(
-    *_data->config
-  );
+  _data->adapter = EasyFullControl::make();
 
   if (_data->adapter != nullptr)
   {
@@ -158,8 +64,6 @@ FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
       _data->node->get_logger(),
       "Created EasyFullControl adapter instance."
     );
-
-    _data->adapter->start();
     add_robots();
   }
   else
@@ -399,8 +303,8 @@ auto FleetAdapter::Robot::navigate(
     GoalHandle::SharedPtr,
     const std::shared_ptr<const NavigationAction::Feedback> feedback)
     {
-      remaining_time =
-        rmf_traffic_ros2::convert(feedback->estimated_time_remaining);
+      // remaining_time =
+      //   rmf_traffic_ros2::convert(feedback->estimated_time_remaining);
     };
   goal_options.result_callback =
     [this](const GoalHandle::WrappedResult& result)
@@ -470,7 +374,6 @@ void FleetAdapter::Robot::action_executor(
 //==============================================================================
 FleetAdapter::~FleetAdapter()
 {
-  _data->adapter->stop();
   for (const auto& [_, robot] : _data->robots)
   {
     robot->stop();
