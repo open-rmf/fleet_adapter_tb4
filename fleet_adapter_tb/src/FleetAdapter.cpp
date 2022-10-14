@@ -159,7 +159,6 @@ FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
       "Created EasyFullControl adapter instance."
     );
 
-    _data->adapter->start();
     add_robots();
   }
   else
@@ -470,7 +469,6 @@ void FleetAdapter::Robot::action_executor(
 //==============================================================================
 FleetAdapter::~FleetAdapter()
 {
-  _data->adapter->stop();
   for (const auto& [_, robot] : _data->robots)
   {
     robot->stop();
