@@ -13,111 +13,151 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- */
+*/
 
 #include "FleetAdapter.hpp"
 
 #include <rmf_fleet_adapter/agv/parse_graph.hpp>
 
-#include <rmf_traffic/agv/Interpolate.hpp>
 #include <rmf_traffic/geometry/Circle.hpp>
+#include <rmf_traffic/agv/Interpolate.hpp>
 
 #include <rmf_traffic_ros2/Time.hpp>
 
 #include <tf2/LinearMath/Quaternion.h>
 
 //==============================================================================
-FleetAdapter::FleetAdapter(const rclcpp::NodeOptions &options) {
+FleetAdapter::FleetAdapter(const rclcpp::NodeOptions& options)
+{
   _data = std::make_shared<Data>();
   _data->node =
-      std::make_shared<rclcpp::Node>("turtlebot_fleet_adapter", options);
-  _data->threads.push_back(std::thread([n = _data->node]() {
-    while (rclcpp::ok()) {
-      rclcpp::spin_some(n);
-    }
-  }));
+    std::make_shared<rclcpp::Node>("turtlebot_fleet_adapter", options);
+  _data->threads.push_back(std::thread(
+      [n = _data->node]()
+      {
+        while (rclcpp::ok())
+        {
+          rclcpp::spin_some(n);
+        }
+      }
+  ));
 
-  RCLCPP_INFO(_data->node->get_logger(), "MOD Starting %s",
-              _data->node->get_name());
+  RCLCPP_INFO(
+    _data->node->get_logger(),
+    "Starting %s",
+    _data->node->get_name()
+  );
 
-  _data->fleet_name = _data->node->declare_parameter("fleet_name", "turtlebot");
-  RCLCPP_INFO(_data->node->get_logger(), "Configuring fleet [%s].",
-              _data->fleet_name.c_str());
+  _data->fleet_name = _data->node->declare_parameter(
+    "fleet_name", "turtlebot");
+  RCLCPP_INFO(
+    _data->node->get_logger(),
+    "Configuring fleet [%s].",\
+    _data->fleet_name.c_str()
+  );
 
   _data->adapter = EasyFullControl::make();
 
-  RCLCPP_INFO(_data->node->get_logger(), "Finished EasyFullControl make...",
-              _data->node->get_name());
-
-  if (_data->adapter != nullptr) {
-    RCLCPP_INFO(_data->node->get_logger(),
-                "Created EasyFullControl adapter instance.");
+  if (_data->adapter != nullptr)
+  {
+    RCLCPP_INFO(
+      _data->node->get_logger(),
+      "Created EasyFullControl adapter instance."
+    );
     add_robots();
-  } else {
-    RCLCPP_INFO(_data->node->get_logger(),
-                "Failed to create EasyFullControl adapter instance.");
+  }
+  else
+  {
+    RCLCPP_INFO(
+      _data->node->get_logger(),
+      "Failed to create EasyFullControl adapter instance."
+    );
   }
 }
 //==============================================================================
-void FleetAdapter::add_robots() {
+void FleetAdapter::add_robots()
+{
 
-  auto add_robot = [data = _data](const std::string &ns,
-                                  const std::string &name,
-                                  const std::string &charger_name,
-                                  const std::string &initial_map_name,
-                                  rclcpp::Node::SharedPtr node) {
-    RCLCPP_ERROR(node->get_logger(), ">>>>>>>>>>>>>>> Initialise add_robots");
-
-    auto insertion = data->robots.insert({name, nullptr});
-    if (!insertion.second) {
-      RCLCPP_WARN(
+  auto add_robot =
+    [data = _data](
+    const std::string& ns,
+    const std::string& name,
+    const std::string& charger_name,
+    const std::string& initial_map_name,
+    rclcpp::Node::SharedPtr node)
+    {
+      auto insertion = data->robots.insert({name, nullptr});
+      if (!insertion.second)
+      {
+        RCLCPP_WARN(
           node->get_logger(),
           "Attempted to add robot with name [%s] more than once. Ignoring...",
-          name.c_str());
-      return;
-    }
-    auto robot = std::make_shared<Robot>();
-    // This is a block call.
-    RCLCPP_INFO(node->get_logger(), "Initializing robot [%s]", name.c_str());
-    if (robot->initialize(ns, name, charger_name, initial_map_name, node)) {
-      insertion.first->second = std::move(robot);
+          name.c_str()
+        );
+        return;
+      }
+      auto robot = std::make_shared<Robot>();
+      // This is a block call.
+      RCLCPP_INFO(
+        node->get_logger(),
+        "Initializing robot [%s]", name.c_str()
+      );
+      if (robot->initialize(ns, name, charger_name, initial_map_name, node))
+      {
+        insertion.first->second = std::move(robot);
 
-      data->adapter->add_robot(
+        data->adapter->add_robot(
           insertion.first->second->get_state(),
-          [robot = insertion.first->second]() -> RobotState {
+          [robot = insertion.first->second]() -> RobotState
+          {
             return robot->get_state();
           },
           [robot = insertion.first->second](
-              const std::string &map_name, const Eigen::Vector3d goal,
-              RobotUpdateHandlePtr robot_handle) -> GoalCompletedCallback {
+            const std::string& map_name,
+            const Eigen::Vector3d goal,
+            RobotUpdateHandlePtr robot_handle) -> GoalCompletedCallback
+          {
             return robot->navigate(map_name, goal, robot_handle);
           },
-          [robot = insertion.first->second]() -> bool { return robot->stop(); },
+          [robot = insertion.first->second]() -> bool
+          {
+            return robot->stop();
+          },
           [robot = insertion.first->second](
-              const std::string &dock_name,
-              RobotUpdateHandlePtr robot_handle) -> GoalCompletedCallback {
+            const std::string& dock_name,
+            RobotUpdateHandlePtr robot_handle) -> GoalCompletedCallback
+          {
             return robot->dock(dock_name, robot_handle);
           },
           [robot = insertion.first->second](
-              const std::string &category, const nlohmann::json &description,
-              RobotUpdateHandle::ActionExecution execution) {
+            const std::string& category,
+            const nlohmann::json& description,
+            RobotUpdateHandle::ActionExecution execution)
+          {
             robot->action_executor(category, description, std::move(execution));
-          });
-    } else {
-      RCLCPP_ERROR(node->get_logger(), "Failed to initialize robot [%s]",
-                   name.c_str());
-    }
-  };
+          }
+        );
+      }
+      else
+      {
+        RCLCPP_ERROR(
+          node->get_logger(),
+          "Failed to initialize robot [%s]", name.c_str()
+        );
+      }
+    };
+
 
   std::vector<std::string> robots = {"tb4"};
   robots = _data->node->declare_parameter("robots", robots);
   std::vector<std::string> namespaces;
   std::vector<std::string> charger_names;
   std::vector<std::string> initial_map_names;
-  for (const auto &r : robots) {
+  for (const auto& r : robots)
+  {
     namespaces.push_back(_data->node->declare_parameter(r + ".namespace", ""));
-    initial_map_names.push_back(
-        _data->node->declare_parameter(r + ".initial_map_name", "L1"));
+    initial_map_names.push_back(_data->node->declare_parameter(
+        r + ".initial_map_name", "L1"));
     charger_names.push_back(_data->node->declare_parameter(
         r + ".charger_waypoint", "tinyRobot1_charger"));
   }
@@ -125,84 +165,110 @@ void FleetAdapter::add_robots() {
   // Spin separate threads to add each robot.
   // We pass this classes node and not adapter node so that callback queues
   // can execute independently.
-  for (std::size_t i = 0; i < robots.size(); ++i) {
-    _data->threads.push_back(std::thread(add_robot, namespaces[i], robots[i],
-                                         charger_names[i], initial_map_names[i],
-                                         _data->node));
+  for (std::size_t i = 0; i < robots.size(); ++i)
+  {
+    _data->threads.push_back(std::thread(
+        add_robot, namespaces[i], robots[i], charger_names[i],
+        initial_map_names[i], _data->node));
   }
 }
 
 //==============================================================================
-auto FleetAdapter::Robot::initialize(const std::string &ns,
-                                     const std::string &name_,
-                                     const std::string &charger_name_,
-                                     const std::string &initial_map_name_,
-                                     rclcpp::Node::SharedPtr node_) -> bool {
-
-  RCLCPP_ERROR(node->get_logger(), ">>>>>>>>>>>>>>> Initialise");
+auto FleetAdapter::Robot::initialize(
+  const std::string& ns,
+  const std::string& name_,
+  const std::string& charger_name_,
+  const std::string& initial_map_name_,
+  rclcpp::Node::SharedPtr node_) -> bool
+{
   name = name_;
   charger_name = charger_name_;
   map_name = initial_map_name_;
   node = node_;
   odom_sub = node->create_subscription<Odom>(
-      ns + "/odom", rclcpp::QoS(10), [&](Odom::ConstSharedPtr msg) {
-        tf2::Quaternion q(
-            msg->pose.pose.orientation.x, msg->pose.pose.orientation.y,
-            msg->pose.pose.orientation.z, msg->pose.pose.orientation.w);
-        tf2::Matrix3x3 m(q);
-        double roll, pitch, yaw;
-        m.getRPY(roll, pitch, yaw);
+    ns + "/odom",
+    rclcpp::QoS(10),
+    [&](Odom::ConstSharedPtr msg)
+    {
+      tf2::Quaternion q(
+        msg->pose.pose.orientation.x,
+        msg->pose.pose.orientation.y,
+        msg->pose.pose.orientation.z,
+        msg->pose.pose.orientation.w);
+      tf2::Matrix3x3 m(q);
+      double roll, pitch, yaw;
+      m.getRPY(roll, pitch, yaw);
 
-        // TODO(YV): Transformation
-        location = Eigen::Vector3d{msg->pose.pose.position.x,
-                                   msg->pose.pose.position.y, yaw};
+      // TODO(YV): Transformation
+      location = Eigen::Vector3d{
+        msg->pose.pose.position.x,
+        msg->pose.pose.position.y,
+        yaw};
 
-        RCLCPP_DEBUG(node->get_logger(), "Robot [%s] is at [%.2f, %.2f, %.2f]",
-                     name.c_str(), location.value()[0], location.value()[1],
-                     location.value()[2]);
-      });
+      RCLCPP_DEBUG(
+        node->get_logger(),
+        "Robot [%s] is at [%.2f, %.2f, %.2f]",
+        name.c_str(),
+        location.value()[0],
+        location.value()[1],
+        location.value()[2]
+      );
+    }
+  );
 
   // Wait for odom
-  while (!location.has_value()) {
+  while (!location.has_value())
+  {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 
   // Wait for nav2 action server
-  RCLCPP_ERROR(node->get_logger(),
-               ">>>>>>>>>>>>>>> CLIENT NAVIGATE TO POSE [%s]", ns.c_str());
-
   nav2_client = rclcpp_action::create_client<NavigationAction>(
-      node, ns + "/navigate_to_pose");
+    node,
+    ns + "/navigate_to_pose");
 
   // TODO(YV): Add a timeout
   return nav2_client->wait_for_action_server();
 }
 
 //==============================================================================
-auto FleetAdapter::Robot::get_state() -> RobotState {
+auto FleetAdapter::Robot::get_state() -> RobotState
+{
   const auto l =
-      location.has_value() ? location.value() : Eigen::Vector3d{0, 0, 0};
-  auto state = RobotState(name, charger_name, map_name, l, battery_soc, false);
+    location.has_value() ? location.value() : Eigen::Vector3d{0, 0, 0};
+  auto state = RobotState(
+    name,
+    charger_name,
+    map_name,
+    l,
+    battery_soc,
+    false
+  );
 
   return state;
 }
 
 //==============================================================================
-auto FleetAdapter::Robot::navigate(const std::string &map_name,
-                                   const Eigen::Vector3d goal_,
-                                   RobotUpdateHandlePtr robot_handle)
-    -> GoalCompletedCallback {
-  auto cb = [this](rmf_traffic::Duration &remaining_time_,
-                   bool &request_replan_) -> bool {
-    if (!finished_navigating) {
-      // Robot is still navigating. Update remaining time once we receive a
-      // feedback.
-      if (remaining_time.has_value())
-        remaining_time_ = remaining_time.value();
-      return false;
-    }
-    return true;
-  };
+auto FleetAdapter::Robot::navigate(
+  const std::string& map_name,
+  const Eigen::Vector3d goal_,
+  RobotUpdateHandlePtr robot_handle) -> GoalCompletedCallback
+{
+  auto cb =
+    [this](
+    rmf_traffic::Duration& remaining_time_,
+    bool& request_replan_) -> bool
+    {
+      if (!finished_navigating)
+      {
+        // Robot is still navigating. Update remaining time once we receive a
+        // feedback.
+        if (remaining_time.has_value())
+          remaining_time_ = remaining_time.value();
+        return false;
+      }
+      return true;
+    };
 
   auto goal = NavigationAction::Goal();
   goal.pose.header.frame_id = "map";
@@ -214,45 +280,56 @@ auto FleetAdapter::Robot::navigate(const std::string &map_name,
   goal.pose.pose.orientation = tf2::toMsg(q);
 
   auto goal_options =
-      rclcpp_action::Client<NavigationAction>::SendGoalOptions();
+    rclcpp_action::Client<NavigationAction>::SendGoalOptions();
   goal_options.goal_response_callback =
-      [this](const GoalHandle::SharedPtr &goal_handle) {
-        if (!goal_handle) {
-          RCLCPP_ERROR(node->get_logger(),
-                       "Navigation goal was rejected by server for robot [%s]",
-                       name.c_str());
-        } else {
-          RCLCPP_INFO(node->get_logger(),
-                      "Navigation goal accepted by server for robot [%s].",
-                      name.c_str());
-        }
-      };
+    [this](const GoalHandle::SharedPtr& goal_handle)
+    {
+      if (!goal_handle)
+      {
+        RCLCPP_ERROR(
+          node->get_logger(),
+          "Navigation goal was rejected by server for robot [%s]",
+          name.c_str());
+      }
+      else
+      {
+        RCLCPP_INFO(
+          node->get_logger(),
+          "Navigation goal accepted by server for robot [%s].",
+          name.c_str());
+      }
+    };
   goal_options.feedback_callback =
-      [this](GoalHandle::SharedPtr,
-             const std::shared_ptr<const NavigationAction::Feedback> feedback) {
-        // remaining_time =
-        //   rmf_traffic_ros2::convert(feedback->estimated_time_remaining);
-      };
+    [this](
+    GoalHandle::SharedPtr,
+    const std::shared_ptr<const NavigationAction::Feedback> feedback)
+    {
+      // remaining_time =
+      //   rmf_traffic_ros2::convert(feedback->estimated_time_remaining);
+    };
   goal_options.result_callback =
-      [this](const GoalHandle::WrappedResult &result) {
-        switch (result.code) {
+    [this](const GoalHandle::WrappedResult& result)
+    {
+      switch (result.code)
+      {
         case rclcpp_action::ResultCode::SUCCEEDED:
           break;
         case rclcpp_action::ResultCode::ABORTED:
-          RCLCPP_ERROR(node->get_logger(), "Goal was aborted for robot %s.",
-                       name.c_str());
+          RCLCPP_ERROR(
+            node->get_logger(), "Goal was aborted for robot %s.", name.c_str());
           return;
         case rclcpp_action::ResultCode::CANCELED:
-          RCLCPP_ERROR(node->get_logger(), "Goal was canceled for robot %s.",
-                       name.c_str());
+          RCLCPP_ERROR(
+            node->get_logger(), "Goal was canceled for robot %s.",
+            name.c_str());
           return;
         default:
           RCLCPP_ERROR(node->get_logger(), "Unknown result code");
           return;
-        }
-        finished_navigating = true;
-        goal_handle = nullptr;
-      };
+      }
+      finished_navigating = true;
+      goal_handle = nullptr;
+    };
 
   finished_navigating = false;
   remaining_time = std::nullopt;
@@ -261,49 +338,66 @@ auto FleetAdapter::Robot::navigate(const std::string &map_name,
 }
 
 //==============================================================================
-auto FleetAdapter::Robot::stop() -> bool {
-  if (goal_handle != nullptr) {
+auto FleetAdapter::Robot::stop() -> bool
+{
+  if (goal_handle != nullptr)
+  {
     nav2_client->async_cancel_goal(goal_handle);
   }
   return true;
 }
 
 //==============================================================================
-auto FleetAdapter::Robot::dock(const std::string &dock_name,
-                               RobotUpdateHandlePtr robot_handle)
-    -> GoalCompletedCallback {
-  auto cb = [this](rmf_traffic::Duration &remaining_time_,
-                   bool &request_replan_) -> bool { return true; };
+auto FleetAdapter::Robot::dock(
+  const std::string& dock_name,
+  RobotUpdateHandlePtr robot_handle) -> GoalCompletedCallback
+{
+  auto cb =
+    [this](
+    rmf_traffic::Duration& remaining_time_,
+    bool& request_replan_) -> bool
+    {
+      return true;
+    };
 
   return cb;
 }
 
 //==============================================================================
 void FleetAdapter::Robot::action_executor(
-    const std::string &category, const nlohmann::json &description,
-    RobotUpdateHandle::ActionExecution execution) {
+  const std::string& category,
+  const nlohmann::json& description,
+  RobotUpdateHandle::ActionExecution execution)
+{
   execution.finished();
 }
 
 //==============================================================================
-FleetAdapter::~FleetAdapter() {
-  for (const auto &[_, robot] : _data->robots) {
+FleetAdapter::~FleetAdapter()
+{
+  for (const auto& [_, robot] : _data->robots)
+  {
     robot->stop();
   }
-  for (auto &thread : _data->threads) {
+  for (auto& thread : _data->threads)
+  {
     if (thread.joinable())
       thread.join();
   }
 }
 
 //==============================================================================
-void FleetAdapter::run() { _data->adapter->wait(); }
+void FleetAdapter::run()
+{
+  _data->adapter->wait();
+}
 
 // #include <rclcpp_components/register_node_macro.hpp>
 // RCLCPP_COMPONENTS_REGISTER_NODE(FleetAdapter)
 
 // ==============================================================================
-int main(int argc, char **argv) {
+int main(int argc, char** argv)
+{
   rclcpp::init(argc, argv);
   auto adapter = std::make_shared<FleetAdapter>();
   adapter->run();
