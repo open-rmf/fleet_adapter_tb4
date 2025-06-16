@@ -241,7 +241,8 @@ auto FleetAdapter::Robot::get_state() -> RobotState
     charger_name,
     map_name,
     l,
-    battery_soc
+    battery_soc,
+    false
   );
 
   return state;
